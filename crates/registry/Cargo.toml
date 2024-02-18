@@ -1,0 +1,33 @@
+[package]
+name = "registry"
+version = "0.1.0"
+edition.workspace = true
+license-file = "../../LICENSE"
+
+[dependencies]
+# Internal dependencies from Kellnr
+settings.workspace = true
+common.workspace = true
+db.workspace = true
+auth.workspace = true
+error.workspace = true
+appstate.workspace = true
+storage.workspace = true
+
+# External dependencies from crates.io
+anyhow.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+reqwest.workspace = true
+tracing.workspace = true
+axum.workspace = true
+hyper.workspace = true
+http-body-util.workspace = true
+
+[dev-dependencies]
+mockall.workspace = true
+rm_rf.workspace = true
+rand.workspace = true
+tokio.workspace = true
+tower.workspace = true

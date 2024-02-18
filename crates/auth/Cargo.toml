@@ -1,0 +1,29 @@
+[package]
+name = "auth"
+authors.workspace = true
+edition.workspace = true
+version.workspace = true
+license-file = "../../LICENSE"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+# Internal dependencies from Kellnr
+settings.workspace = true
+db.workspace = true
+error.workspace = true
+appstate.workspace = true
+
+# External dependencies from crates.io
+rand.workspace = true
+serde.workspace = true
+axum.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+mockall.workspace = true
+axum-extra.workspace = true
+tokio.workspace = true
+tower.workspace = true
+storage.workspace = true
+hyper.workspace = true
