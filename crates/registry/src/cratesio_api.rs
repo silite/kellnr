@@ -21,6 +21,8 @@ pub async fn search(params: SearchParams) -> ApiResult<String> {
         }
     };
 
+    trace!("url {}", url);
+
     let client = match reqwest::Client::builder().user_agent("kellnr").build() {
         Ok(client) => client,
         Err(e) => {

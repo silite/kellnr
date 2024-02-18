@@ -141,7 +141,6 @@ async fn fetch_cratesio_description(name: &str) -> Result<Option<String>, Status
         krate: Krate,
     }
 
-    // let url = Url::parse("https://crates.io/api/v1/crates/")
     //     .unwrap()
     //     .join(name)
     //     .unwrap();
