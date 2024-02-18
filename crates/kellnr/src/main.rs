@@ -12,6 +12,7 @@ use index::{
     cratesio_prefetch_api::{self, background_update_thread, cratesio_prefetch_thread},
     kellnr_prefetch_api,
 };
+use once_cell::sync::Lazy;
 use registry::{cratesio_api, kellnr_api};
 use settings::{LogFormat, Settings};
 use std::{
@@ -23,11 +24,24 @@ use std::{
 use storage::{
     cratesio_crate_storage::CratesIoCrateStorage, kellnr_crate_storage::KellnrCrateStorage,
 };
-use tokio::{fs::create_dir_all, net::TcpListener};
+use tokio::{
+    fs::create_dir_all,
+    net::TcpListener,
+    runtime::{Builder, Runtime},
+};
 use tower_http::services::{ServeDir, ServeFile};
 use tracing::info;
 use tracing_subscriber::fmt::format;
 use web_ui::{session, ui, user};
+
+pub static TOKIO_RUNTIME: Lazy<Runtime> = Lazy::new(|| {
+    Builder::new_multi_thread()
+        .thread_name("TokioRT")
+        .worker_threads(20)
+        .enable_all()
+        .build()
+        .unwrap()
+});
 
 #[tokio::main]
 async fn main() {
@@ -102,7 +116,7 @@ async fn main() {
         .route("/queue", get(docs::api::docs_in_queue))
         .route(
             "/:package/:version",
-            put(docs::api::publish_docs).layer(DefaultBodyLimit::max(max_docs_size * 1_000_000))
+            put(docs::api::publish_docs).layer(DefaultBodyLimit::max(max_docs_size * 1_000_000)),
         )
         .route("/:package/latest", get(docs::api::latest_docs));
 
@@ -184,7 +198,9 @@ async fn main() {
     let listener = TcpListener::bind(addr)
         .await
         .unwrap_or_else(|_| panic!("Failed to bind to {addr}"));
-    axum::serve(listener, app).await.unwrap();
+    TOKIO_RUNTIME.spawn(async {
+        axum::serve(listener, app).await.unwrap();
+    });
 }
 
 async fn init_cratesio_prefetch_thread(
