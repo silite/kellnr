@@ -157,7 +157,7 @@ async fn fetch_cratesio_description(name: &str) -> Result<Option<String>, Status
     //     .json::<MinimalCrate>()
     //     .await
     //     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Some(""))
+    Ok(Some("".to_owned()))
 }
 
 pub async fn cratesio_prefetch_thread(
