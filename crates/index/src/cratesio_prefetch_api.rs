@@ -141,23 +141,23 @@ async fn fetch_cratesio_description(name: &str) -> Result<Option<String>, Status
         krate: Krate,
     }
 
-    let url = Url::parse("https://crates.io/api/v1/crates/")
-        .unwrap()
-        .join(name)
-        .unwrap();
+    // let url = Url::parse("https://crates.io/api/v1/crates/")
+    //     .unwrap()
+    //     .join(name)
+    //     .unwrap();
 
-    let response = Client::new()
-        .get(url)
-        .header("User-Agent", "kellnr.io/kellnr")
-        .send()
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    // let response = Client::new()
+    //     .get(url)
+    //     .header("User-Agent", "kellnr.io/kellnr")
+    //     .send()
+    //     .await
+    //     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let desc = response
-        .json::<MinimalCrate>()
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(desc.krate.description)
+    // let desc = response
+    //     .json::<MinimalCrate>()
+    //     .await
+    //     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Some(""))
 }
 
 pub async fn cratesio_prefetch_thread(
