@@ -43,7 +43,8 @@ pub static TOKIO_RUNTIME: Lazy<Runtime> = Lazy::new(|| {
         .unwrap()
 });
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let settings: Arc<Settings> = Settings::try_from(Path::new("config"))
         .expect("Cannot read config")
         .into();
@@ -197,7 +198,7 @@ fn main() {
     let listener = TcpListener::bind(addr)
         .await
         .unwrap_or_else(|_| panic!("Failed to bind to {addr}"));
-    TOKIO_RUNTIME.block_on(async {
+    TOKIO_RUNTIME.spawn(async {
         axum::serve(listener, app).await.unwrap();
     });
 }
