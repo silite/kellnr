@@ -364,7 +364,7 @@ async fn fetch_cratesio_prefetch(
     name: OriginalName,
     sender: &Arc<flume::Sender<CratesioPrefetchMsg>>,
 ) -> Result<Prefetch, StatusCode> {
-    let url = Url::parse("https://rsproxy.cn/index")
+    let url = Url::parse("https://rsproxy.cn/index/")
         .unwrap()
         .join(&crate_sub_path(&name.to_normalized()))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
