@@ -389,8 +389,6 @@ async fn fetch_cratesio_prefetch(
                 .await
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-            trace!("{:?}", data);
-
             let prefetch = Prefetch {
                 etag: etag.clone().unwrap_or_default(),
                 last_modified: last_modified.clone().unwrap_or_default(),
