@@ -238,7 +238,6 @@ async fn get_insert_data(
             trace!("Inserting prefetch data from crates.io for {}", msg.name);
             let date = chrono::Utc::now().to_rfc3339();
             cache.insert(msg.name.to_string(), date).await;
-            trace!("get_insert_data convert_index_data");
             convert_index_data(&msg.name, msg.data)
                 .await
                 .map(|(m, d)| (msg.name.clone(), m, d, msg.etag, msg.last_modified))
@@ -390,6 +389,8 @@ async fn fetch_cratesio_prefetch(
                 .text()
                 .await
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+            trace!("{:?}", data);
 
             let prefetch = Prefetch {
                 etag: etag.clone().unwrap_or_default(),
@@ -565,6 +566,6 @@ mod tests {
 
 #[test]
 fn test() {
-    let a = crate_sub_path(&NormalizedName::from_unchecked("ftlog".to_owned()));
+    let a = crate_sub_path(&NormalizedName::from_unchecked("axum-extra".to_owned()));
     println!("{}", a);
 }
