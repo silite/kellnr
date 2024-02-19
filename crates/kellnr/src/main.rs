@@ -44,7 +44,7 @@ pub static TOKIO_RUNTIME: Lazy<Runtime> = Lazy::new(|| {
 });
 
 fn main() {
-    TOKIO_RUNTIME.spawn(async {
+    TOKIO_RUNTIME.block_on(async {
         let settings: Arc<Settings> = Settings::try_from(Path::new("config"))
             .expect("Cannot read config")
             .into();
