@@ -198,7 +198,7 @@ async fn main() {
     let listener = TcpListener::bind(addr)
         .await
         .unwrap_or_else(|_| panic!("Failed to bind to {addr}"));
-    TOKIO_RUNTIME.spawn(async {
+    TOKIO_RUNTIME.block_on(async {
         axum::serve(listener, app).await.unwrap();
     });
 }
