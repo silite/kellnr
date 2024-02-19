@@ -34,175 +34,162 @@ use tracing::info;
 use tracing_subscriber::fmt::format;
 use web_ui::{session, ui, user};
 
-pub static TOKIO_RUNTIME: Lazy<Runtime> = Lazy::new(|| {
-    Builder::new_multi_thread()
-        .thread_name("TokioRT")
-        .worker_threads(20)
-        .enable_all()
-        .build()
-        .unwrap()
-});
+#[tokio::main]
+async fn main() {
+    let settings: Arc<Settings> = Settings::try_from(Path::new("config"))
+        .expect("Cannot read config")
+        .into();
+    let addr: SocketAddr = format!("{}:{}", settings.local.ip, settings.local.port)
+        .parse()
+        .expect("Failed to parse IP and port: {settings.local.ip}:{settings.local.port}");
 
-fn main() {
-    TOKIO_RUNTIME.block_on(async {
-        let settings: Arc<Settings> = Settings::try_from(Path::new("config"))
-            .expect("Cannot read config")
-            .into();
-        let addr: SocketAddr = format!("{}:{}", settings.local.ip, settings.local.port)
-            .parse()
-            .expect("Failed to parse IP and port: {settings.local.ip}:{settings.local.port}");
+    // Configure tracing subscriber
+    init_tracing(&settings);
 
-        // Configure tracing subscriber
-        init_tracing(&settings);
+    info!("Starting kellnr");
 
-        info!("Starting kellnr");
+    // Initialize kellnr crate storage
+    let crate_storage: Arc<KellnrCrateStorage> = init_kellnr_crate_storage(&settings).await.into();
 
-        // Initialize kellnr crate storage
-        let crate_storage: Arc<KellnrCrateStorage> =
-            init_kellnr_crate_storage(&settings).await.into();
+    // Create the database connection. Has to be done after the index and storage
+    // as the needed folders for the sqlite database my not been created before that.
+    let con_string = get_connect_string(&settings);
+    let db = Database::new(&con_string)
+        .await
+        .expect("Failed to create database");
+    let db = Arc::new(db) as Arc<dyn DbProvider>;
 
-        // Create the database connection. Has to be done after the index and storage
-        // as the needed folders for the sqlite database my not been created before that.
-        let con_string = get_connect_string(&settings);
-        let db = Database::new(&con_string)
-            .await
-            .expect("Failed to create database");
-        let db = Arc::new(db) as Arc<dyn DbProvider>;
+    // Crates.io Proxy
+    let cratesio_storage: Arc<CratesIoCrateStorage> = init_cratesio_proxy(&settings).await.into();
+    let (cratesio_prefetch_sender, cratesio_prefetch_receiver) =
+        flume::unbounded::<CratesioPrefetchMsg>();
+    let cratesio_prefetch_sender = Arc::new(cratesio_prefetch_sender);
+    let cratesio_prefetch_receiver = Arc::new(cratesio_prefetch_receiver);
 
-        // Crates.io Proxy
-        let cratesio_storage: Arc<CratesIoCrateStorage> =
-            init_cratesio_proxy(&settings).await.into();
-        let (cratesio_prefetch_sender, cratesio_prefetch_receiver) =
-            flume::unbounded::<CratesioPrefetchMsg>();
-        let cratesio_prefetch_sender = Arc::new(cratesio_prefetch_sender);
-        let cratesio_prefetch_receiver = Arc::new(cratesio_prefetch_receiver);
+    init_cratesio_prefetch_thread(
+        get_connect_string(&settings),
+        cratesio_prefetch_sender.clone(),
+        cratesio_prefetch_receiver,
+        settings.proxy.num_threads,
+    )
+    .await;
 
-        init_cratesio_prefetch_thread(
-            get_connect_string(&settings),
-            cratesio_prefetch_sender.clone(),
-            cratesio_prefetch_receiver,
-            settings.proxy.num_threads,
+    // Docs hosting
+    init_docs_hosting(&settings, &con_string).await;
+    let data_dir = settings.registry.data_dir.clone();
+    let signing_key = Key::generate();
+    let max_docs_size = settings.docs.max_size;
+    let max_crate_size = settings.registry.max_crate_size as usize;
+    let state = AppStateData {
+        db,
+        signing_key,
+        settings,
+        crate_storage,
+        cratesio_storage,
+        cratesio_prefetch_sender,
+    };
+
+    let user = Router::new()
+        .route("/login", post(user::login))
+        .route("/logout", get(user::logout))
+        .route("/change_pwd", post(user::change_pwd))
+        .route("/add", post(user::add))
+        .route("/delete/:name", delete(user::delete))
+        .route("/reset_pwd/:name", post(user::reset_pwd))
+        .route("/add_token", post(user::add_token))
+        .route("/delete_token/:id", delete(user::delete_token))
+        .route("/list_tokens", get(user::list_tokens))
+        .route("/list_users", get(user::list_users))
+        .route("/login_state", get(user::login_state));
+
+    let docs = Router::new()
+        .route("/build", post(ui::build_rustdoc))
+        .route("/queue", get(docs::api::docs_in_queue))
+        .route(
+            "/:package/:version",
+            put(docs::api::publish_docs).layer(DefaultBodyLimit::max(max_docs_size * 1_000_000)),
         )
-        .await;
+        .route("/:package/latest", get(docs::api::latest_docs));
 
-        // Docs hosting
-        init_docs_hosting(&settings, &con_string).await;
-        let data_dir = settings.registry.data_dir.clone();
-        let signing_key = Key::generate();
-        let max_docs_size = settings.docs.max_size;
-        let max_crate_size = settings.registry.max_crate_size as usize;
-        let state = AppStateData {
-            db,
-            signing_key,
-            settings,
-            crate_storage,
-            cratesio_storage,
-            cratesio_prefetch_sender,
-        };
+    let docs_service = get_service(ServeDir::new(format!("{}/docs", data_dir))).route_layer(
+        middleware::from_fn_with_state(state.clone(), session::session_auth_when_required),
+    );
+    let static_files_service = get_service(
+        ServeDir::new(PathBuf::from("static"))
+            .append_index_html_on_directories(true)
+            .fallback(ServeFile::new(PathBuf::from("static/index.html"))),
+    );
 
-        let user = Router::new()
-            .route("/login", post(user::login))
-            .route("/logout", get(user::logout))
-            .route("/change_pwd", post(user::change_pwd))
-            .route("/add", post(user::add))
-            .route("/delete/:name", delete(user::delete))
-            .route("/reset_pwd/:name", post(user::reset_pwd))
-            .route("/add_token", post(user::add_token))
-            .route("/delete_token/:id", delete(user::delete_token))
-            .route("/list_tokens", get(user::list_tokens))
-            .route("/list_users", get(user::list_users))
-            .route("/login_state", get(user::login_state));
+    let kellnr_api = Router::new()
+        .route("/:crate_name/owners", delete(kellnr_api::remove_owner))
+        .route("/:crate_name/owners", put(kellnr_api::add_owner))
+        .route("/:crate_name/owners", get(kellnr_api::list_owners))
+        .route("/", get(kellnr_api::search))
+        .route("/:package/:version/download", get(kellnr_api::download))
+        .route(
+            "/new",
+            put(kellnr_api::publish).layer(DefaultBodyLimit::max(max_crate_size * 1_000_000)),
+        )
+        .route("/:crate_name/:version/yank", delete(kellnr_api::yank))
+        .route("/:crate_name/:version/unyank", put(kellnr_api::unyank))
+        .route("/config.json", get(kellnr_prefetch_api::config_kellnr))
+        .route("/:a/:b/:package", get(kellnr_prefetch_api::prefetch_kellnr))
+        .route(
+            "/:a/:package",
+            get(kellnr_prefetch_api::prefetch_len2_kellnr),
+        )
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::auth_req_token::cargo_auth_when_required,
+        ));
 
-        let docs = Router::new()
-            .route("/build", post(ui::build_rustdoc))
-            .route("/queue", get(docs::api::docs_in_queue))
-            .route(
-                "/:package/:version",
-                put(docs::api::publish_docs)
-                    .layer(DefaultBodyLimit::max(max_docs_size * 1_000_000)),
-            )
-            .route("/:package/latest", get(docs::api::latest_docs));
+    let cratesio_api = Router::new()
+        .route("/", get(cratesio_api::search))
+        .route("/:package/:version/download", get(cratesio_api::download))
+        .route("/config.json", get(cratesio_prefetch_api::config_cratesio))
+        .route(
+            "/:a/:b/:name",
+            get(cratesio_prefetch_api::prefetch_cratesio),
+        )
+        .route(
+            "/:a/:name",
+            get(cratesio_prefetch_api::prefetch_len2_cratesio),
+        )
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::auth_req_token::cargo_auth_when_required,
+        ));
 
-        let docs_service = get_service(ServeDir::new(format!("{}/docs", data_dir))).route_layer(
-            middleware::from_fn_with_state(state.clone(), session::session_auth_when_required),
-        );
-        let static_files_service = get_service(
-            ServeDir::new(PathBuf::from("static"))
-                .append_index_html_on_directories(true)
-                .fallback(ServeFile::new(PathBuf::from("static/index.html"))),
-        );
+    let ui = Router::new()
+        .route("/version", get(ui::kellnr_version))
+        .route("/crates", get(ui::crates))
+        .route("/search", get(ui::search))
+        .route("/statistic", get(ui::statistic))
+        .route("/crate_data", get(ui::crate_data))
+        .route("/cratesio_data", get(ui::cratesio_data))
+        .route("/delete_crate", delete(ui::delete))
+        .route("/settings", get(ui::settings))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            session::session_auth_when_required,
+        ));
 
-        let kellnr_api = Router::new()
-            .route("/:crate_name/owners", delete(kellnr_api::remove_owner))
-            .route("/:crate_name/owners", put(kellnr_api::add_owner))
-            .route("/:crate_name/owners", get(kellnr_api::list_owners))
-            .route("/", get(kellnr_api::search))
-            .route("/:package/:version/download", get(kellnr_api::download))
-            .route(
-                "/new",
-                put(kellnr_api::publish).layer(DefaultBodyLimit::max(max_crate_size * 1_000_000)),
-            )
-            .route("/:crate_name/:version/yank", delete(kellnr_api::yank))
-            .route("/:crate_name/:version/unyank", put(kellnr_api::unyank))
-            .route("/config.json", get(kellnr_prefetch_api::config_kellnr))
-            .route("/:a/:b/:package", get(kellnr_prefetch_api::prefetch_kellnr))
-            .route(
-                "/:a/:package",
-                get(kellnr_prefetch_api::prefetch_len2_kellnr),
-            )
-            .route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                auth::auth_req_token::cargo_auth_when_required,
-            ));
+    let app = Router::new()
+        .route("/me", get(kellnr_api::me))
+        .nest("/api/v1/ui", ui)
+        .nest("/api/v1/user", user)
+        .nest("/api/v1/docs", docs)
+        .nest("/api/v1/crates", kellnr_api)
+        .nest("/api/v1/cratesio", cratesio_api)
+        .nest_service("/docs", docs_service)
+        .fallback(static_files_service)
+        .with_state(state)
+        .layer(tower_http::trace::TraceLayer::new_for_http());
 
-        let cratesio_api = Router::new()
-            .route("/", get(cratesio_api::search))
-            .route("/:package/:version/download", get(cratesio_api::download))
-            .route("/config.json", get(cratesio_prefetch_api::config_cratesio))
-            .route(
-                "/:a/:b/:name",
-                get(cratesio_prefetch_api::prefetch_cratesio),
-            )
-            .route(
-                "/:a/:name",
-                get(cratesio_prefetch_api::prefetch_len2_cratesio),
-            )
-            .route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                auth::auth_req_token::cargo_auth_when_required,
-            ));
-
-        let ui = Router::new()
-            .route("/version", get(ui::kellnr_version))
-            .route("/crates", get(ui::crates))
-            .route("/search", get(ui::search))
-            .route("/statistic", get(ui::statistic))
-            .route("/crate_data", get(ui::crate_data))
-            .route("/cratesio_data", get(ui::cratesio_data))
-            .route("/delete_crate", delete(ui::delete))
-            .route("/settings", get(ui::settings))
-            .route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                session::session_auth_when_required,
-            ));
-
-        let app = Router::new()
-            .route("/me", get(kellnr_api::me))
-            .nest("/api/v1/ui", ui)
-            .nest("/api/v1/user", user)
-            .nest("/api/v1/docs", docs)
-            .nest("/api/v1/crates", kellnr_api)
-            .nest("/api/v1/cratesio", cratesio_api)
-            .nest_service("/docs", docs_service)
-            .fallback(static_files_service)
-            .with_state(state)
-            .layer(tower_http::trace::TraceLayer::new_for_http());
-
-        let listener = TcpListener::bind(addr)
-            .await
-            .unwrap_or_else(|_| panic!("Failed to bind to {addr}"));
-        axum::serve(listener, app).await.unwrap();
-    });
+    let listener = TcpListener::bind(addr)
+        .await
+        .unwrap_or_else(|_| panic!("Failed to bind to {addr}"));
+    axum::serve(listener, app).await.unwrap();
 }
 
 async fn init_cratesio_prefetch_thread(

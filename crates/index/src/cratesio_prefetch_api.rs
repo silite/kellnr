@@ -16,7 +16,7 @@ use reqwest::{Client, Url};
 use serde::Deserialize;
 use std::ops::Deref;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tracing::{error, trace, warn};
 
 static UPDATE_INTERVAL_SECS: u64 = 60 * 120; // 2h background update interval
@@ -50,6 +50,7 @@ async fn internal_prefetch_cratesio(
     db: &Arc<dyn DbProvider>,
     sender: &Arc<flume::Sender<CratesioPrefetchMsg>>,
 ) -> Result<Prefetch, StatusCode> {
+    let instance = Instant::now();
     let if_modified_since = headers
         .get("if-modified-since")
         .map(|h| h.to_str().unwrap_or_default().to_string());
@@ -64,7 +65,7 @@ async fn internal_prefetch_cratesio(
         if_modified_since
     );
 
-    match db
+    let res = match db
         .is_cratesio_cache_up_to_date(
             &name.to_normalized(),
             if_none_match.clone(),
@@ -89,7 +90,12 @@ async fn internal_prefetch_cratesio(
             Err(StatusCode::NOT_MODIFIED)
         }
         PrefetchState::NotFound => Ok(fetch_cratesio_prefetch(name, sender).await?),
-    }
+    };
+    trace!(
+        "internal_prefetch_cratesio {:?}",
+        Instant::now().duration_since(instance)
+    );
+    res
 }
 
 fn background_update(
@@ -363,6 +369,7 @@ async fn fetch_cratesio_prefetch(
     name: OriginalName,
     sender: &Arc<flume::Sender<CratesioPrefetchMsg>>,
 ) -> Result<Prefetch, StatusCode> {
+    let instance = Instant::now();
     let url = Url::parse("https://rsproxy.cn/index/")
         .unwrap()
         .join(&crate_sub_path(&name.to_normalized()))
@@ -374,7 +381,7 @@ async fn fetch_cratesio_prefetch(
         .send()
         .await;
 
-    match response {
+    let res = match response {
         Ok(r) => {
             let headers = r.headers();
             let etag = headers
@@ -416,7 +423,12 @@ async fn fetch_cratesio_prefetch(
             error!("Error fetching prefetch data from crates.io: {}", e);
             Err(StatusCode::NOT_FOUND)
         }
-    }
+    };
+    trace!(
+        "fetch_cratesio_prefetch {:?}",
+        Instant::now().duration_since(instance)
+    );
+    res
 }
 
 fn crate_sub_path(name: &NormalizedName) -> String {
